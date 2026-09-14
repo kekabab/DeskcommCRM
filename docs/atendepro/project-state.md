@@ -7,18 +7,18 @@
 Este bloco supersede o retrato historico abaixo:
 
 - A primeira fatia vertical esta implementada na arvore de trabalho: onboarding/preset, canal `simulator`, runtime persistente zero-egress, UI multirrodada e testes de rota.
-- A migration `20260913160000_0239_canal_simulador_local.sql` e o contrato cruzado sao obrigatorios antes de executar o simulador contra um banco.
-- O diff ainda nao foi publicado nem commitado.
+- A migration `20260913160000_0239_canal_simulador_local.sql` e o contrato cruzado foram aplicados e validados no banco Supabase isolado.
+- A fatia esta commitada localmente em `f70d1945` na branch `publish/atendepro-latest`; a publicacao no `main` remoto aguarda permissao de escrita no repositorio.
 - A validacao operacional foi executada em stack Supabase isolada, com dependencias via Corepack e sem tocar nos containers antigos.
 - O fluxo ponta a ponta onboarding -> simulador -> Inbox -> persistencia passou com zero egressos observados.
 - O gate restante e de release: concluir a bateria geral de testes legados, configurar observabilidade/Redis de producao e validar provider real em staging controlado.
 
-- Data: 2026-09-13
-- Fase: auditoria inicial concluída; contratos em preparação
+- Data: 2026-09-14
+- Fase: fatia vertical implementada; validacao focada concluida; release controlado pendente
 - Workspace canônico: `C:\teste\DeskcommCRM-canonical`
 - Repositório de origem: `https://github.com/melgarafael/DeskcommCRM`
-- Branch local: `main`
-- Baseline local: `ca2eb0a`
+- Branch local: `publish/atendepro-latest`
+- Baseline remoto reconciliado: `c890afce`
 
 ## Estado do ambiente
 
@@ -29,12 +29,14 @@ Este bloco supersede o retrato historico abaixo:
 - O script update-com-dados passou preservando 10 linhas sem violar constraints.
 - Nenhum WhatsApp, WAHA, Meta, Zernio, Wacalls ou LLM externo foi conectado.
 
-## Evidencias de validacao — 2026-09-13
+## Evidencias de validacao — 2026-09-14
 
 - `pnpm typecheck`: verde.
+- `pnpm build`: verde; a rota `/api/v1/simulator/messages` foi incluida no build de producao.
 - ESLint dos arquivos tocados e Prettier: verde; `lint:channels` e `lint:role-rank`: verdes.
 - Testes focados de AtendePro e baseline: 7 arquivos, 33 testes verdes.
-- Wizard E2E: 13 cenarios verdes; fluxo vertical dedicado onboarding -> simulador -> CRM: 1/1 verde.
+- Fluxo vertical dedicado onboarding -> simulador -> CRM: 1/1 verde novamente em porta isolada `3101`.
+- Smoke E2E da home: 1/1 verde novamente em porta isolada `3102`.
 - Smoke E2E do CRM: conversa -> lead, lote no funil, importacao e agenda: 11/11 verdes.
 - Banco: INSTALL/UPDATE da baseline e UPDATE sobre dados existentes verdes; migration 0239 idempotente.
 - O script `test:atendepro` foi adicionado para reproduzir o gate focado sem depender do ambiente jsdom global.
