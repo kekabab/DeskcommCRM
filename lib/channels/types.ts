@@ -9,7 +9,7 @@ import type { OutboundMedia } from "@/lib/waha/media-send";
 
 export type { OutboundMedia };
 
-export type ChannelProvider = "waha" | "meta_cloud" | "zernio" | "wacalls";
+export type ChannelProvider = "waha" | "meta_cloud" | "zernio" | "wacalls" | "simulator";
 
 /**
  * Os providers que transportam MENSAGEM — o subconjunto sobre o qual a matriz
@@ -20,13 +20,17 @@ export type ChannelProvider = "waha" | "meta_cloud" | "zernio" | "wacalls";
  * `archived_at`, jid, uma linha por organização — e porque `voice_calls` já
  * aponta para ela. O que ele NÃO é: um canal por onde texto entra ou sai.
  *
- * Distinguir os dois no TIPO, e não numa condicional espalhada, é o que faz o
+ * `simulator` (AtendePro) mora em `channel_sessions` com persistência local
+ * isolada (`simulator_session_key`), sem watchdog de conexão real, sem redrive
+ * de mensageria externa e sem risco de banimento ou cobrança por mensagem.
+ *
+ * Distinguir no TIPO, e não numa condicional espalhada, é o que faz o
  * compilador cobrar a decisão em cada lugar que perguntava "qual canal é este?"
  * presumindo que a resposta sempre sabe mandar recado. Antes disto o CHECK do
  * banco já aceitava `'wacalls'` enquanto este union não — e uma organização que
  * pareasse voz derrubava `getAdapter` com `unknown_channel_provider`.
  */
-export type ProviderDeMensagem = Exclude<ChannelProvider, "wacalls">;
+export type ProviderDeMensagem = Exclude<ChannelProvider, "wacalls" | "simulator">;
 
 export interface ChannelCapabilities {
   /** Pode enviar texto livre a qualquer momento? false = exige template fora da janela. */

@@ -38,10 +38,47 @@ export function TestarClient({ nome, agenteId, versaoId }: Props) {
   const rascunho = Boolean(agenteId) && !versaoId;
 
   async function ensaiar() {
-    if (!agenteId || !versaoId) return;
     setCarregando(true);
     setDesfecho(null);
     try {
+      // Consome a rota planejada POST /api/v1/simulator/messages
+      const resSim = await fetch("/api/v1/simulator/messages", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ body: mensagem }),
+      }).catch(() => null);
+
+      if (resSim && resSim.ok) {
+        const jsonSim = (await resSim.json()) as {
+          data?: {
+            final_text?: string;
+            response_text?: string;
+            reply?: string;
+            outbound_message?: { body?: string };
+          };
+        };
+        const textoSim =
+          jsonSim.data?.outbound_message?.body ??
+          jsonSim.data?.final_text ??
+          jsonSim.data?.response_text ??
+          jsonSim.data?.reply;
+        if (textoSim?.trim()) {
+          setDesfecho({ tipo: "resposta", texto: textoSim.trim() });
+          return;
+        }
+      }
+
+      // Fallback gracioso para o motor local do agente quando a rota planejada ainda não foi ativada
+      if (!agenteId || !versaoId) {
+        setDesfecho({
+          tipo: "erro",
+          mensagem: t(
+            "A rota planejada POST /api/v1/simulator/messages aguarda ativação pelo motor de runtime (Duna).",
+          ),
+        });
+        return;
+      }
+
       const res = await fetch(`/api/v1/ai/agents/${agenteId}/versions/${versaoId}/test`, {
         method: "POST",
         headers: { "content-type": "application/json" },

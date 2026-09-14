@@ -9,6 +9,7 @@ import { redirect } from "next/navigation";
 
 import { audit } from "@/lib/audit";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { ATENDEPRO_DEFAULT_INTERFACE } from "@/lib/atendepro/interface-preset";
 import { requireOnboardingCtx, OnboardingError } from "./_shared";
 
 export type FinishOnboardingResult =
@@ -26,15 +27,31 @@ export async function finishOnboarding(): Promise<FinishOnboardingResult> {
 
   const admin = createAdminClient();
 
-  const { data: existing } = await admin
+  const { data: existing, error: readError } = await admin
     .from("organizations")
     .select("onboarded_at")
     .eq("id", ctx.orgId)
     .maybeSingle();
 
+  if (readError) return { ok: false, error: "db_error", details: readError.message };
+
   const alreadyOnboarded = Boolean(existing?.onboarded_at);
 
   if (!alreadyOnboarded) {
+    // O preset e por membership para nao alterar a experiencia de outros
+    // usuarios da mesma organizacao. O filtro revoked_at impede reativar um
+    // vinculo revogado por acidente.
+    const { error: memberError } = await admin
+      .from("user_organizations")
+      .update({ interface_settings: ATENDEPRO_DEFAULT_INTERFACE })
+      .eq("organization_id", ctx.orgId)
+      .eq("user_id", ctx.userId)
+      .is("revoked_at", null);
+
+    if (memberError) {
+      return { ok: false, error: "db_error", details: memberError.message };
+    }
+
     const { error } = await admin
       .from("organizations")
       .update({ onboarded_at: new Date().toISOString() })

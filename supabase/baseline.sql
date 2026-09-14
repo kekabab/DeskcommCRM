@@ -1389,7 +1389,7 @@ CREATE TABLE IF NOT EXISTS "public"."conversations" (
     "usable_for_rag_marked_at" timestamp with time zone,
     "usable_for_rag_marked_by" "uuid",
     "rag_review_status" "text",
-    CONSTRAINT "conversations_channel_check" CHECK (("channel" = 'whatsapp'::"text")),
+    CONSTRAINT "conversations_channel_check" CHECK (("channel" = ANY (ARRAY['whatsapp'::"text", 'simulator'::"text"]))),
     CONSTRAINT "conversations_rag_review_status_check" CHECK ((("rag_review_status" IS NULL) OR ("rag_review_status" = ANY (ARRAY['pending_review'::"text", 'ingested'::"text", 'skipped'::"text"])))),
     CONSTRAINT "conversations_status_check" CHECK (("status" = ANY (ARRAY['open'::"text", 'pending'::"text", 'resolved'::"text", 'claimed'::"text", 'ai_handling'::"text", 'closed'::"text", 'archived'::"text"])))
 );
@@ -9379,6 +9379,11 @@ alter table public.channel_sessions alter column waha_session_name drop not null
 alter table public.channel_sessions
   add column if not exists zernio_account_id text;
 
+-- simulador local AtendePro (migration 0239) — chave explícita, sem reutilizar
+-- waha_session_name: a sessão não representa um número WhatsApp.
+alter table public.channel_sessions
+  add column if not exists simulator_session_key text;
+
 -- wacalls (migration 0233, chamada de voz) — colunas do quarto provider,
 -- precisam existir antes das constraints abaixo referenciá-las.
 alter table public.channel_sessions
@@ -9393,7 +9398,7 @@ alter table public.channel_sessions
   add constraint channel_sessions_provider_check
   -- 'wacalls' (migration 0233, chamada de voz) somado aqui — UM bloco só por
   -- constraint, doutrina de baseline (não duplicar drop+add por migration).
-  check (provider = any (array['waha'::text, 'meta_cloud'::text, 'zernio'::text, 'wacalls'::text]));
+  check (provider = any (array['waha'::text, 'meta_cloud'::text, 'zernio'::text, 'wacalls'::text, 'simulator'::text]));
 
 alter table public.channel_sessions
   drop constraint if exists channel_sessions_provider_ref_check;
@@ -9403,11 +9408,32 @@ alter table public.channel_sessions
     (provider = 'waha'       and waha_session_name    is not null) or
     (provider = 'meta_cloud' and meta_phone_number_id is not null) or
     (provider = 'zernio'     and zernio_account_id    is not null) or
-    (provider = 'wacalls'    and wacalls_session_id    is not null)
+    (provider = 'wacalls'    and wacalls_session_id    is not null) or
+    (provider = 'simulator'  and simulator_session_key is not null)
   );
+
+-- Espelho incremental da migration 0239: bancos existentes também precisam
+-- aceitar conversas criadas pelo simulador local AtendePro.
+alter table public.conversations
+  drop constraint if exists conversations_channel_check;
+
+alter table public.conversations
+  add constraint conversations_channel_check
+  check (channel = any (array['whatsapp'::text, 'simulator'::text]));
 
 comment on column public.channel_sessions.zernio_account_id is
   'Identificador da conta conectada NO INTERMEDIÁRIO (accountId), não o phone_number_id da Meta. É o que endereça envio e webhook. Espelhado em lib/channels/session-ref.ts.';
+
+comment on column public.channel_sessions.simulator_session_key is
+  'Chave determinística da sessão local AtendePro. Não representa número, credencial ou transporte externo.';
+
+create unique index if not exists channel_sessions_simulator_key_unique
+  on public.channel_sessions (organization_id, simulator_session_key)
+  where provider = 'simulator' and simulator_session_key is not null;
+
+create unique index if not exists conversations_simulator_contact_session_unique
+  on public.conversations (organization_id, contact_id, channel_session_id)
+  where channel = 'simulator';
 
 -- ---- o que falta para o terceiro canal ENVIAR (migration 0132) ----
 -- Espelho idempotente da 0117. Racional completo no arquivo da migration.

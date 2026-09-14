@@ -99,6 +99,8 @@ export const CHANNEL_PROVIDER_META: ChannelProvider = "meta_cloud";
 export const CHANNEL_PROVIDER_ZERNIO: ChannelProvider = "zernio";
 /** Chamada de voz WhatsApp (spec 18). Não transporta mensagem — ver abaixo. */
 export const CHANNEL_PROVIDER_WACALLS: ChannelProvider = "wacalls";
+/** Simulador local AtendePro (zero-egress, isolado de WhatsApp real). */
+export const CHANNEL_PROVIDER_SIMULATOR: ChannelProvider = "simulator";
 
 /**
  * Os providers por onde MENSAGEM entra e sai — a única lista que responde
@@ -144,6 +146,8 @@ export function transportaMensagem(provider: string | null | undefined): boolean
  *
  *   - `wacalls` está aqui: ignorar em silêncio é o certo, e um aviso por sessão
  *     de voz a cada minuto seria ruído perpétuo.
+ *   - `simulator` (AtendePro) está aqui: canal local zero-egress, não tem
+ *     conexão de rede a vigiar nem transporte WhatsApp externo.
  *   - um provider que o CHECK do banco já aceita e esta imagem ainda não conhece
  *     (o clone que aplicou o baseline antes de puxar a imagem nova) NÃO está
  *     aqui — ele tem de fazer barulho, porque uma conexão sem vigia e sem
@@ -153,7 +157,7 @@ export function transportaMensagem(provider: string | null | undefined): boolean
  * hora de escolher por onde mandar recado, o desconhecido é tão inútil quanto a
  * voz. Aqui a pergunta é outra.
  */
-export const PROVIDERS_SEM_MENSAGEM = ["wacalls"] as const;
+export const PROVIDERS_SEM_MENSAGEM = ["wacalls", "simulator"] as const;
 
 /**
  * Erro de COMPILAÇÃO enquanto sobrar provider fora das duas listas. Provider
@@ -171,7 +175,23 @@ export function canalConhecidoSemMensagem(provider: string | null | undefined): 
   return (PROVIDERS_SEM_MENSAGEM as readonly string[]).includes(provider ?? "");
 }
 
+/**
+ * Capabilities do simulador local AtendePro (zero-egress, sem janela de 24h,
+ * sem risco de banimento e sem custo por mensagem).
+ */
+export const SIMULATOR_CAPABILITIES: ChannelCapabilities = {
+  freeformOutsideWindow: true,
+  requiresTemplates: false,
+  canManageTemplates: false,
+  banRisk: false,
+  minIntervalMs: null,
+  voiceNote: "server-convert",
+  groups: "none",
+  costPerMessage: false,
+};
+
 export function capabilitiesOf(provider: ChannelProvider): ChannelCapabilities {
+  if (provider === "simulator") return SIMULATOR_CAPABILITIES;
   const caps = CHANNEL_CAPABILITIES[provider as ProviderDeMensagem];
   // Fail-closed: provider fora da matriz não herda o default do WAHA. O tipo
   // barra em compilação; isto barra o que vem do banco em runtime.

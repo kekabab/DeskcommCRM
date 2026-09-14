@@ -103,7 +103,8 @@ function relativeTime(iso: string | null, locale: Locale): string {
 /** "Aguardando há 5 min" — desde a última mensagem do cliente (fallback: criação). */
 function waitingLabel(
   conversation: ConversationWithContact,
-  t: (texto: string) => string = (texto) => texto, locale: Locale,
+  t: (texto: string) => string = (texto) => texto,
+  locale: Locale,
 ): string {
   const since = conversation.last_inbound_at ?? conversation.created_at;
   if (!since) return t("Aguardando");
@@ -133,7 +134,6 @@ export function ConversationListItem({
   const time = relativeTime(conversation.last_message_at, localeDaData);
   const unread = conversation.unread_count_for_assignee ?? 0;
 
-
   /**
    * Quem manda, pela MESMA regra do cabeçalho.
    *
@@ -160,11 +160,13 @@ export function ConversationListItem({
   // respondendo. Cai no nome do canal quando não há número (canal recém-criado).
   const canal = conversation.channel_sessions ?? null;
   const rotuloCanal = canal?.phone_number ?? canal?.display_name ?? null;
+  const isSimulator = canal?.provider === "simulator";
 
   const temSelos =
     visibleTags.length > 0 ||
     (mostrarAtendente && comando.quem === "humano") ||
     (mostrarCanal && rotuloCanal != null) ||
+    isSimulator ||
     Boolean(c?.is_blocked) ||
     Boolean(c?.is_anonymized);
 
@@ -175,14 +177,12 @@ export function ConversationListItem({
       onClick={() => onSelect(conversation.id)}
       className={cn(
         "group relative flex w-full items-start gap-3 border-b border-border/70 px-3 py-2.5 text-left transition-colors hover:bg-surface-elevated",
-        "focus-visible:outline-hidden focus-visible:bg-surface-elevated",
+        "focus-visible:bg-surface-elevated focus-visible:outline-hidden",
         isSelected && "bg-accent-50 hover:bg-accent-50",
       )}
       aria-current={isSelected ? "true" : undefined}
     >
-      {isSelected && (
-        <span className="absolute inset-y-0 left-0 w-0.5 bg-accent" aria-hidden />
-      )}
+      {isSelected && <span className="absolute inset-y-0 left-0 w-0.5 bg-accent" aria-hidden />}
       <div className="relative shrink-0">
         <Avatar className="h-10 w-10">
           {/* Só monta a <img> quando existe arquivo: sem isso o browser pediria
@@ -190,11 +190,7 @@ export function ConversationListItem({
               foto — que é a maioria. O AvatarFallback do Radix já cobre o caso
               de a imagem não carregar, então as iniciais nunca somem. */}
           {c?.avatar_storage_path && !c?.is_anonymized ? (
-            <AvatarImage
-              src={`/api/v1/contacts/${c.id}/avatar`}
-              alt=""
-              className="object-cover"
-            />
+            <AvatarImage src={`/api/v1/contacts/${c.id}/avatar`} alt="" className="object-cover" />
           ) : null}
           <AvatarFallback className="bg-surface-elevated text-xs font-medium text-text-muted">
             {initials(displayName, phoneFallback)}
@@ -202,7 +198,7 @@ export function ConversationListItem({
         </Avatar>
         <span
           className={cn(
-            "absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-background",
+            "absolute -right-0.5 -bottom-0.5 h-3 w-3 rounded-full border-2 border-background",
             dot,
           )}
           aria-hidden
@@ -213,7 +209,7 @@ export function ConversationListItem({
         {queuePosition !== undefined && (
           <div className="mb-1 flex items-center gap-1.5">
             <span
-              className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-accent-soft px-1 text-[10px] font-medium tabular-nums text-accent"
+              className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-accent-soft px-1 text-[10px] font-medium text-accent tabular-nums"
               aria-label={`${t("Posição")} ${queuePosition} ${t("na fila")}`}
             >
               {queuePosition}º
@@ -228,12 +224,12 @@ export function ConversationListItem({
             className={cn(
               "truncate text-sm",
               unread > 0 ? "font-semibold text-text" : "font-medium text-text",
-              c?.is_anonymized && "font-normal italic text-text-muted",
+              c?.is_anonymized && "font-normal text-text-muted italic",
             )}
           >
             {displayName}
           </span>
-          <span className="shrink-0 text-[11px] tabular-nums text-text-subtle">{time}</span>
+          <span className="shrink-0 text-[11px] text-text-subtle tabular-nums">{time}</span>
         </div>
 
         <div className="mt-0.5 flex items-center justify-between gap-2">
@@ -249,7 +245,7 @@ export function ConversationListItem({
             {truncated}
           </p>
           {unread > 0 && (
-            <span className="inline-flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-full bg-accent px-1.5 text-[10px] font-semibold tabular-nums text-accent-foreground">
+            <span className="inline-flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-full bg-accent px-1.5 text-[10px] font-semibold text-accent-foreground tabular-nums">
               {unread}
             </span>
           )}
@@ -262,9 +258,7 @@ export function ConversationListItem({
                 {t}
               </Badge>
             ))}
-            {overflow > 0 && (
-              <span className="text-[10px] text-text-muted">+{overflow}</span>
-            )}
+            {overflow > 0 && <span className="text-[10px] text-text-muted">+{overflow}</span>}
             {mostrarAtendente && comando.quem === "humano" && (
               <OwnerBadge ownerKind="user" ownerName={comando.nome ?? t("Atendente")} compacto />
             )}
@@ -276,6 +270,15 @@ export function ConversationListItem({
               >
                 <Phone size={9} weight="regular" aria-hidden />
                 {rotuloCanal}
+              </Badge>
+            )}
+            {isSimulator && (
+              <Badge
+                variant="outline"
+                className="h-4 border-primary/40 bg-primary/5 px-1.5 text-[10px] font-normal text-primary"
+                title={t("Conversa criada no simulador local; não representa um cliente real.")}
+              >
+                {t("Simulação local")}
               </Badge>
             )}
             {c?.is_blocked && (

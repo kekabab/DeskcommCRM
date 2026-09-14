@@ -2987,6 +2987,7 @@ export type Database = {
           provider: string
           status: string
           status_reason: string | null
+          simulator_session_key: string | null
           updated_at: string
           wacalls_jid: string | null
           wacalls_paired_at: string | null
@@ -3020,6 +3021,7 @@ export type Database = {
           provider?: string
           status?: string
           status_reason?: string | null
+          simulator_session_key?: string | null
           updated_at?: string
           wacalls_jid?: string | null
           wacalls_paired_at?: string | null
@@ -3053,6 +3055,7 @@ export type Database = {
           provider?: string
           status?: string
           status_reason?: string | null
+          simulator_session_key?: string | null
           updated_at?: string
           wacalls_jid?: string | null
           wacalls_paired_at?: string | null
@@ -8800,4 +8803,3 @@ export const Constants = {
     },
   },
 } as const
-

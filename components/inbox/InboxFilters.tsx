@@ -1,9 +1,9 @@
 "use client";
 import { useT } from "@/hooks/i18n/useT";
 import { useEffect, useState } from "react";
-import { MagnifyingGlass } from "@/lib/ui/icons";
+import { MagnifyingGlass, Robot } from "@/lib/ui/icons";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import {
   Select,
@@ -55,9 +55,10 @@ export interface InboxFiltersValue {
 interface Props {
   value: InboxFiltersValue;
   onChange: (next: InboxFiltersValue) => void;
+  onAbrirSimulador?: () => void;
 }
 
-export function InboxFilters({ value, onChange }: Props) {
+export function InboxFilters({ value, onChange, onAbrirSimulador }: Props) {
   const t = useT();
   const [searchInput, setSearchInput] = useState(value.search);
   const { data: channels } = useChannelSessions({ refetchInterval: 30_000 });
@@ -139,6 +140,21 @@ export function InboxFilters({ value, onChange }: Props) {
           >
             {t("Não lidos")}
           </button>
+          {onAbrirSimulador && (
+            <button
+              type="button"
+              onClick={onAbrirSimulador}
+              title={t("Abrir Simulador Local")}
+              aria-label={t("Abrir Simulador Local")}
+              className={cn(
+                "h-9 shrink-0 flex items-center gap-1.5 rounded-full border border-primary/40 bg-primary/5 px-3 text-xs font-medium text-primary transition-colors",
+                "hover:bg-primary/15 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+              )}
+            >
+              <Robot size={14} weight="duotone" aria-hidden />
+              <span>{t("Simulador")}</span>
+            </button>
+          )}
         </div>
 
         {(showChannelSwitch || (tagVocabulary?.length ?? 0) > 0) && (
@@ -226,6 +242,9 @@ export function InboxFilters({ value, onChange }: Props) {
             );
           })}
         </TabsList>
+        {tabs.map((tab) => (
+          <TabsContent key={tab} value={tab} tabIndex={-1} className="sr-only" aria-hidden="true" />
+        ))}
       </Tabs>
     </div>
   );

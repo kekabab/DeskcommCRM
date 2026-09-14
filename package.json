@@ -23,6 +23,7 @@
     "e2e:env": "bash scripts/gerar-env-e2e.sh",
     "test:journeys": "playwright test -c tests/journeys/playwright.config.ts",
     "test:unit": "vitest run",
+    "test:atendepro": "vitest run --environment node tests/unit/atendepro-finish-onboarding.test.ts tests/unit/atendepro-simulator-messages.test.ts tests/unit/finish-onboarding-interface.test.ts tests/unit/apendice-do-baseline-nao-diverge-da-cadeia.test.ts tests/unit/baseline-reaplicavel.test.ts tests/unit/baseline-constraint-reconstruida.test.ts tests/unit/manifest-x-migrations.test.ts",
     "test:db": "bash scripts/test-db.sh",
     "test:shell": "bash tests/shell/update-guard.test.sh && bash tests/shell/dono-do-projeto.test.sh && bash tests/shell/scheduler-entrypoint.test.sh && bash tests/shell/cron-sem-crontab-previo.test.sh && bash tests/shell/owner-id-por-email.test.sh && bash tests/shell/deskcomm-contribuir.test.sh && bash hostgator-setup-kit/test-validators.sh",
     "test:invariants": "bash scripts/test-db.sh",

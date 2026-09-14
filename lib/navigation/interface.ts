@@ -23,6 +23,11 @@ const SIMPLIFICADA: readonly NavDestinationId[] = [
   "/app/kanban",
   "/app/contacts",
   "/app/tasks",
+  "/app/products",
+  "/app/ai/agents",
+  "/app/settings/tenant/agenda",
+  "/app/settings/marca",
+  "/app/settings/tenant",
   "/app/connections",
 ];
 /** Portas pessoais e recuperação administrativa não são removíveis. Atualização

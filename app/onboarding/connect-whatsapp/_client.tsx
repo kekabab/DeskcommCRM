@@ -348,7 +348,53 @@ export function ConnectWhatsappClient({
   // é o único estado em que esta tela não tem efeito colateral nenhum.
   if (forma === null) {
     return (
-      <div className="space-y-4 rounded-lg border bg-background p-6">
+      <div className="space-y-5 rounded-lg border bg-background p-6">
+        <div className="rounded-lg border-2 border-primary/40 bg-primary/5 p-4 space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-foreground">
+              {t("Modo Local — Simulador Interativo")}
+            </h3>
+            <span className="rounded-full bg-primary/15 px-2.5 py-0.5 text-xs font-medium text-primary">
+              {t("Recomendado (sem egress)")}
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {t(
+              "Valide o atendimento e os agendamentos diretamente na interface com o simulador, sem conectar celular nem enviar mensagens externas.",
+            )}
+          </p>
+          <div className="pt-1">
+            <Button
+              type="button"
+              disabled={pending}
+              onClick={() =>
+                startTransition(async () => {
+                  try {
+                    await skipWhatsapp();
+                  } catch (err) {
+                    if (isRedirectError(err)) throw err;
+                    toast.error(`${t("Falha ao selecionar simulador:")} ${String(err)}`);
+                  }
+                })
+              }
+              className="w-full sm:w-auto"
+            >
+              {pending ? t("Iniciando simulador...") : t("Usar simulador local (sem WhatsApp real)")}
+            </Button>
+          </div>
+        </div>
+
+        <div className="relative my-2">
+          <div className="absolute inset-0 flex items-center">
+            <span className="w-full border-t" />
+          </div>
+          <div className="relative flex justify-center text-xs uppercase">
+            <span className="bg-background px-2 text-muted-foreground">
+              {t("ou conecte um canal externo")}
+            </span>
+          </div>
+        </div>
+
         <fieldset className="space-y-3">
           <legend className="text-sm font-medium">{t("Como você já usa esse número?")}</legend>
           <p className="text-xs text-muted-foreground">
