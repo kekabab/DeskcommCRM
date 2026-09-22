@@ -81,6 +81,7 @@ CRONS="
 # confirmado, futuro e ainda não avisado.
 */5 * * * *|45|api/v1/cron/agenda-reminder
 */15 * * * *|60|api/v1/cron/risk-watcher
+*/15 * * * *|90|api/v1/cron/opportunity-discovery
 */30 * * * *|60|api/v1/cron/contact-phones
 17 * * * *|60|api/v1/cron/contact-proposals-watcher
 0 12 * * *|60|api/v1/cron/lgpd-sla-watcher

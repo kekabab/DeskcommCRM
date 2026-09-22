@@ -24018,6 +24018,712 @@ create trigger trg_org_voice_calls_set_updated_at
 
 notify pgrst, 'reload schema';
 
+-- ---- Opportunity Intelligence (migration 0240) -----------------------------
+--
+-- Append-only baseline block. Keep this block before the anon hardening scan
+-- below: the scan is intentionally the final block of the baseline.
+
+CREATE TABLE IF NOT EXISTS "public"."opportunity_records" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "organization_id" "uuid" NOT NULL,
+    "linked_lead_id" "uuid",
+    "identity_key" "text" NOT NULL,
+    "display_name" "text" NOT NULL,
+    "domain" "text",
+    "region_key" "text",
+    "state" "text" DEFAULT 'discovered'::"text" NOT NULL,
+    "confidence" numeric(4,3) DEFAULT 0 NOT NULL,
+    "signals" "jsonb" DEFAULT '[]'::"jsonb" NOT NULL,
+    "exception_code" "text",
+    "exception_message" "text",
+    "last_evaluated_at" timestamp with time zone,
+    "last_exception_at" timestamp with time zone,
+    "suppressed_at" timestamp with time zone,
+    "suppressed_reason" "text",
+    "suppressed_by_user_id" "uuid",
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "opportunity_records_state_check" CHECK ("state" = ANY (ARRAY['discovered'::"text", 'validating'::"text", 'action_ready'::"text", 'awaiting_human'::"text", 'contacted'::"text", 'engaged'::"text", 'converted'::"text", 'dismissed'::"text", 'suppressed'::"text", 'stale'::"text" ])),
+    CONSTRAINT "opportunity_records_identity_key_not_blank" CHECK (length(btrim("identity_key")) > 0),
+    CONSTRAINT "opportunity_records_display_name_not_blank" CHECK (length(btrim("display_name")) > 0),
+    CONSTRAINT "opportunity_records_confidence_check" CHECK (("confidence" >= 0) AND ("confidence" <= 1)),
+    CONSTRAINT "opportunity_records_signals_object_check" CHECK (jsonb_typeof("signals") = 'array'::"text")
+);
+
+ALTER TABLE "public"."opportunity_records" OWNER TO "postgres";
+
+CREATE TABLE IF NOT EXISTS "public"."opportunity_evidence" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "organization_id" "uuid" NOT NULL,
+    "opportunity_id" "uuid" NOT NULL,
+    "evidence_key" "text" NOT NULL,
+    "source_id" "text" NOT NULL,
+    "source_kind" "text" NOT NULL,
+    "source_url" "text" NOT NULL,
+    "terms_url" "text" NOT NULL,
+    "policy_status" "text" NOT NULL,
+    "claim" "text" NOT NULL,
+    "signal_keys" "text"[] DEFAULT '{}'::"text"[] NOT NULL,
+    "polarity" "text" DEFAULT 'supports'::"text" NOT NULL,
+    "confidence" numeric(4,3) NOT NULL,
+    "collected_at" timestamp with time zone NOT NULL,
+    "freshness_ttl_hours" integer NOT NULL,
+    "expires_at" timestamp with time zone GENERATED ALWAYS AS ((("collected_at" AT TIME ZONE 'UTC'::text) + ("freshness_ttl_hours" * '01:00:00'::interval)) AT TIME ZONE 'UTC'::text) STORED,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "opportunity_evidence_source_kind_check" CHECK ("source_kind" = ANY (ARRAY['open_data'::"text", 'official_api'::"text", 'tenant_first_party'::"text", 'operator_verified'::"text"])),
+    CONSTRAINT "opportunity_evidence_policy_status_check" CHECK ("policy_status" = ANY (ARRAY['verified_allowed'::"text", 'operator_reviewed'::"text", 'unknown'::"text"])),
+    CONSTRAINT "opportunity_evidence_polarity_check" CHECK ("polarity" = ANY (ARRAY['supports'::"text", 'contradicts'::"text"])),
+    CONSTRAINT "opportunity_evidence_confidence_check" CHECK (("confidence" >= 0) AND ("confidence" <= 1)),
+    CONSTRAINT "opportunity_evidence_freshness_check" CHECK ("freshness_ttl_hours" > 0),
+    CONSTRAINT "opportunity_evidence_key_not_blank" CHECK (length(btrim("evidence_key")) > 0),
+    CONSTRAINT "opportunity_evidence_claim_not_blank" CHECK (length(btrim("claim")) > 0),
+    CONSTRAINT "opportunity_evidence_source_url_https" CHECK ("source_url" ~ '^https://'::"text"),
+    CONSTRAINT "opportunity_evidence_terms_url_https" CHECK (("terms_url" IS NULL) OR ("terms_url" ~ '^https://'::"text"))
+);
+
+ALTER TABLE "public"."opportunity_evidence" OWNER TO "postgres";
+
+CREATE TABLE IF NOT EXISTS "public"."opportunity_actions" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "organization_id" "uuid" NOT NULL,
+    "opportunity_id" "uuid" NOT NULL,
+    "action" "text" NOT NULL,
+    "status" "text" DEFAULT 'proposed'::"text" NOT NULL,
+    "idempotency_key" "text" NOT NULL,
+    "requires_human_approval" boolean DEFAULT true NOT NULL,
+    "pain_hypothesis" "text",
+    "target_offer" "text",
+    "proof_asset_summary" "text",
+    "evidence_keys" "text"[] DEFAULT '{}'::"text"[] NOT NULL,
+    "reason" "text",
+    "created_by_user_id" "uuid",
+    "approved_by_user_id" "uuid",
+    "approved_at" timestamp with time zone,
+    "executed_at" timestamp with time zone,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "opportunity_actions_action_check" CHECK ("action" = ANY (ARRAY['collect_more_evidence'::"text", 'refresh_evidence'::"text", 'prepare_personalized_draft'::"text", 'request_human_review'::"text", 'link_existing_lead'::"text", 'suppress'::"text"])),
+    CONSTRAINT "opportunity_actions_status_check" CHECK ("status" = ANY (ARRAY['proposed'::"text", 'approved'::"text", 'executed'::"text", 'blocked'::"text", 'rejected'::"text"])),
+    CONSTRAINT "opportunity_actions_idempotency_key_not_blank" CHECK (length(btrim("idempotency_key")) > 0)
+);
+
+ALTER TABLE "public"."opportunity_actions" OWNER TO "postgres";
+
+CREATE TABLE IF NOT EXISTS "public"."opportunity_outcomes" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "organization_id" "uuid" NOT NULL,
+    "opportunity_id" "uuid" NOT NULL,
+    "action_id" "uuid",
+    "idempotency_key" "text" NOT NULL,
+    "kind" "text" NOT NULL,
+    "reason" "text",
+    "occurred_at" timestamp with time zone NOT NULL,
+    "metrics" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
+    "created_by_user_id" "uuid",
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "opportunity_outcomes_kind_check" CHECK ("kind" = ANY (ARRAY['reply'::"text", 'meeting'::"text", 'deal_won'::"text", 'deal_lost'::"text", 'unsubscribed'::"text", 'ignored'::"text"])),
+    CONSTRAINT "opportunity_outcomes_metrics_object_check" CHECK (jsonb_typeof("metrics") = 'object'::"text"),
+    CONSTRAINT "opportunity_outcomes_idempotency_key_not_blank" CHECK (length(btrim("idempotency_key")) > 0)
+);
+
+ALTER TABLE "public"."opportunity_outcomes" OWNER TO "postgres";
+
+DO $baseline_guard$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'opportunity_records_pkey' AND conrelid = '"public"."opportunity_records"'::regclass) THEN
+ALTER TABLE ONLY "public"."opportunity_records" ADD CONSTRAINT "opportunity_records_pkey" PRIMARY KEY ("id");
+END IF; END $baseline_guard$;
+
+DO $baseline_guard$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'opportunity_records_org_id_key' AND conrelid = '"public"."opportunity_records"'::regclass) THEN
+ALTER TABLE ONLY "public"."opportunity_records" ADD CONSTRAINT "opportunity_records_org_id_key" UNIQUE ("organization_id", "id");
+END IF; END $baseline_guard$;
+
+DO $baseline_guard$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'opportunity_evidence_pkey' AND conrelid = '"public"."opportunity_evidence"'::regclass) THEN
+ALTER TABLE ONLY "public"."opportunity_evidence" ADD CONSTRAINT "opportunity_evidence_pkey" PRIMARY KEY ("id");
+END IF; END $baseline_guard$;
+
+DO $baseline_guard$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'opportunity_evidence_org_id_key' AND conrelid = '"public"."opportunity_evidence"'::regclass) THEN
+ALTER TABLE ONLY "public"."opportunity_evidence" ADD CONSTRAINT "opportunity_evidence_org_id_key" UNIQUE ("organization_id", "id");
+END IF; END $baseline_guard$;
+
+DO $baseline_guard$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'opportunity_actions_pkey' AND conrelid = '"public"."opportunity_actions"'::regclass) THEN
+ALTER TABLE ONLY "public"."opportunity_actions" ADD CONSTRAINT "opportunity_actions_pkey" PRIMARY KEY ("id");
+END IF; END $baseline_guard$;
+
+DO $baseline_guard$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'opportunity_actions_org_id_key' AND conrelid = '"public"."opportunity_actions"'::regclass) THEN
+ALTER TABLE ONLY "public"."opportunity_actions" ADD CONSTRAINT "opportunity_actions_org_id_key" UNIQUE ("organization_id", "id");
+END IF; END $baseline_guard$;
+
+DO $baseline_guard$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'opportunity_outcomes_pkey' AND conrelid = '"public"."opportunity_outcomes"'::regclass) THEN
+ALTER TABLE ONLY "public"."opportunity_outcomes" ADD CONSTRAINT "opportunity_outcomes_pkey" PRIMARY KEY ("id");
+END IF; END $baseline_guard$;
+
+DO $baseline_guard$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'opportunity_outcomes_org_id_key' AND conrelid = '"public"."opportunity_outcomes"'::regclass) THEN
+ALTER TABLE ONLY "public"."opportunity_outcomes" ADD CONSTRAINT "opportunity_outcomes_org_id_key" UNIQUE ("organization_id", "id");
+END IF; END $baseline_guard$;
+
+DO $baseline_guard$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'opportunity_records_organization_id_fkey' AND conrelid = '"public"."opportunity_records"'::regclass) THEN
+ALTER TABLE ONLY "public"."opportunity_records" ADD CONSTRAINT "opportunity_records_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
+END IF; END $baseline_guard$;
+
+DO $baseline_guard$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'opportunity_records_linked_lead_id_fkey' AND conrelid = '"public"."opportunity_records"'::regclass) THEN
+ALTER TABLE ONLY "public"."opportunity_records" ADD CONSTRAINT "opportunity_records_linked_lead_id_fkey" FOREIGN KEY ("linked_lead_id") REFERENCES "public"."crm_leads"("id") ON DELETE SET NULL;
+END IF; END $baseline_guard$;
+
+DO $baseline_guard$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'opportunity_records_suppressed_by_user_id_fkey' AND conrelid = '"public"."opportunity_records"'::regclass) THEN
+ALTER TABLE ONLY "public"."opportunity_records" ADD CONSTRAINT "opportunity_records_suppressed_by_user_id_fkey" FOREIGN KEY ("suppressed_by_user_id") REFERENCES "auth"."users"("id") ON DELETE SET NULL;
+END IF; END $baseline_guard$;
+
+DO $baseline_guard$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'opportunity_evidence_opportunity_fk' AND conrelid = '"public"."opportunity_evidence"'::regclass) THEN
+ALTER TABLE ONLY "public"."opportunity_evidence" ADD CONSTRAINT "opportunity_evidence_opportunity_fk" FOREIGN KEY ("organization_id", "opportunity_id") REFERENCES "public"."opportunity_records"("organization_id", "id") ON DELETE CASCADE;
+END IF; END $baseline_guard$;
+
+DO $baseline_guard$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'opportunity_actions_opportunity_fk' AND conrelid = '"public"."opportunity_actions"'::regclass) THEN
+ALTER TABLE ONLY "public"."opportunity_actions" ADD CONSTRAINT "opportunity_actions_opportunity_fk" FOREIGN KEY ("organization_id", "opportunity_id") REFERENCES "public"."opportunity_records"("organization_id", "id") ON DELETE CASCADE;
+END IF; END $baseline_guard$;
+
+DO $baseline_guard$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'opportunity_outcomes_opportunity_fk' AND conrelid = '"public"."opportunity_outcomes"'::regclass) THEN
+ALTER TABLE ONLY "public"."opportunity_outcomes" ADD CONSTRAINT "opportunity_outcomes_opportunity_fk" FOREIGN KEY ("organization_id", "opportunity_id") REFERENCES "public"."opportunity_records"("organization_id", "id") ON DELETE CASCADE;
+END IF; END $baseline_guard$;
+
+DO $baseline_guard$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'opportunity_outcomes_action_fk' AND conrelid = '"public"."opportunity_outcomes"'::regclass) THEN
+ALTER TABLE ONLY "public"."opportunity_outcomes" ADD CONSTRAINT "opportunity_outcomes_action_fk" FOREIGN KEY ("organization_id", "action_id") REFERENCES "public"."opportunity_actions"("organization_id", "id") ON DELETE SET NULL;
+END IF; END $baseline_guard$;
+
+DO $baseline_guard$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'opportunity_actions_created_by_user_id_fkey' AND conrelid = '"public"."opportunity_actions"'::regclass) THEN
+ALTER TABLE ONLY "public"."opportunity_actions" ADD CONSTRAINT "opportunity_actions_created_by_user_id_fkey" FOREIGN KEY ("created_by_user_id") REFERENCES "auth"."users"("id") ON DELETE SET NULL;
+END IF; END $baseline_guard$;
+
+DO $baseline_guard$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'opportunity_actions_approved_by_user_id_fkey' AND conrelid = '"public"."opportunity_actions"'::regclass) THEN
+ALTER TABLE ONLY "public"."opportunity_actions" ADD CONSTRAINT "opportunity_actions_approved_by_user_id_fkey" FOREIGN KEY ("approved_by_user_id") REFERENCES "auth"."users"("id") ON DELETE SET NULL;
+END IF; END $baseline_guard$;
+
+DO $baseline_guard$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'opportunity_outcomes_created_by_user_id_fkey' AND conrelid = '"public"."opportunity_outcomes"'::regclass) THEN
+ALTER TABLE ONLY "public"."opportunity_outcomes" ADD CONSTRAINT "opportunity_outcomes_created_by_user_id_fkey" FOREIGN KEY ("created_by_user_id") REFERENCES "auth"."users"("id") ON DELETE SET NULL;
+END IF; END $baseline_guard$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS "opportunity_records_identity_unique" ON "public"."opportunity_records" USING "btree" ("organization_id", "identity_key");
+CREATE UNIQUE INDEX IF NOT EXISTS "opportunity_evidence_key_unique" ON "public"."opportunity_evidence" USING "btree" ("organization_id", "opportunity_id", "evidence_key");
+CREATE UNIQUE INDEX IF NOT EXISTS "opportunity_actions_idempotency_unique" ON "public"."opportunity_actions" USING "btree" ("organization_id", "idempotency_key");
+CREATE UNIQUE INDEX IF NOT EXISTS "opportunity_actions_open_unique" ON "public"."opportunity_actions" USING "btree" ("organization_id", "opportunity_id") WHERE ("status" = ANY (ARRAY['proposed'::"text", 'approved'::"text"]));
+CREATE UNIQUE INDEX IF NOT EXISTS "opportunity_outcomes_idempotency_unique" ON "public"."opportunity_outcomes" USING "btree" ("organization_id", "idempotency_key");
+CREATE INDEX IF NOT EXISTS "opportunity_records_radar_idx" ON "public"."opportunity_records" USING "btree" ("organization_id", "state", "confidence" DESC, "updated_at" DESC);
+CREATE INDEX IF NOT EXISTS "opportunity_records_lead_idx" ON "public"."opportunity_records" USING "btree" ("organization_id", "linked_lead_id") WHERE ("linked_lead_id" IS NOT NULL);
+CREATE INDEX IF NOT EXISTS "opportunity_evidence_freshness_idx" ON "public"."opportunity_evidence" USING "btree" ("organization_id", "opportunity_id", "collected_at" DESC);
+CREATE INDEX IF NOT EXISTS "opportunity_evidence_expires_idx" ON "public"."opportunity_evidence" USING "btree" ("organization_id", "opportunity_id", "expires_at");
+CREATE INDEX IF NOT EXISTS "opportunity_actions_queue_idx" ON "public"."opportunity_actions" USING "btree" ("organization_id", "status", "created_at" DESC);
+CREATE INDEX IF NOT EXISTS "opportunity_outcomes_timeline_idx" ON "public"."opportunity_outcomes" USING "btree" ("organization_id", "opportunity_id", "occurred_at" DESC);
+
+ALTER TABLE "public"."opportunity_records" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "public"."opportunity_evidence" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "public"."opportunity_actions" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "public"."opportunity_outcomes" ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "opportunity_records_select" ON "public"."opportunity_records";
+DROP POLICY IF EXISTS "opportunity_records_write" ON "public"."opportunity_records";
+CREATE POLICY "opportunity_records_select" ON "public"."opportunity_records" FOR SELECT USING (("public"."fn_is_platform_admin"() OR ("organization_id" IN ( SELECT "public"."fn_user_org_ids"() AS "fn_user_org_ids"))));
+CREATE POLICY "opportunity_records_write" ON "public"."opportunity_records" USING (("public"."fn_is_platform_admin"() OR (("organization_id" IN ( SELECT "public"."fn_user_org_ids"() AS "fn_user_org_ids")) AND "public"."fn_role_at_least"("organization_id", 'manager'::"text")))) WITH CHECK (("public"."fn_is_platform_admin"() OR (("organization_id" IN ( SELECT "public"."fn_user_org_ids"() AS "fn_user_org_ids")) AND "public"."fn_role_at_least"("organization_id", 'manager'::"text"))));
+DROP POLICY IF EXISTS "opportunity_evidence_select" ON "public"."opportunity_evidence";
+DROP POLICY IF EXISTS "opportunity_evidence_insert" ON "public"."opportunity_evidence";
+DROP POLICY IF EXISTS "opportunity_evidence_write" ON "public"."opportunity_evidence";
+CREATE POLICY "opportunity_evidence_select" ON "public"."opportunity_evidence" FOR SELECT USING (("public"."fn_is_platform_admin"() OR ("organization_id" IN ( SELECT "public"."fn_user_org_ids"() AS "fn_user_org_ids"))));
+CREATE POLICY "opportunity_evidence_write" ON "public"."opportunity_evidence" USING (("public"."fn_is_platform_admin"() OR (("organization_id" IN ( SELECT "public"."fn_user_org_ids"() AS "fn_user_org_ids")) AND "public"."fn_role_at_least"("organization_id", 'manager'::"text")))) WITH CHECK (("public"."fn_is_platform_admin"() OR (("organization_id" IN ( SELECT "public"."fn_user_org_ids"() AS "fn_user_org_ids")) AND "public"."fn_role_at_least"("organization_id", 'manager'::"text"))));
+DROP POLICY IF EXISTS "opportunity_actions_select" ON "public"."opportunity_actions";
+DROP POLICY IF EXISTS "opportunity_actions_write" ON "public"."opportunity_actions";
+CREATE POLICY "opportunity_actions_select" ON "public"."opportunity_actions" FOR SELECT USING (("public"."fn_is_platform_admin"() OR ("organization_id" IN ( SELECT "public"."fn_user_org_ids"() AS "fn_user_org_ids"))));
+CREATE POLICY "opportunity_actions_write" ON "public"."opportunity_actions" USING (("public"."fn_is_platform_admin"() OR (("organization_id" IN ( SELECT "public"."fn_user_org_ids"() AS "fn_user_org_ids")) AND "public"."fn_role_at_least"("organization_id", 'manager'::"text")))) WITH CHECK (("public"."fn_is_platform_admin"() OR (("organization_id" IN ( SELECT "public"."fn_user_org_ids"() AS "fn_user_org_ids")) AND "public"."fn_role_at_least"("organization_id", 'manager'::"text"))));
+DROP POLICY IF EXISTS "opportunity_outcomes_select" ON "public"."opportunity_outcomes";
+DROP POLICY IF EXISTS "opportunity_outcomes_insert" ON "public"."opportunity_outcomes";
+CREATE POLICY "opportunity_outcomes_select" ON "public"."opportunity_outcomes" FOR SELECT USING (("public"."fn_is_platform_admin"() OR ("organization_id" IN ( SELECT "public"."fn_user_org_ids"() AS "fn_user_org_ids"))));
+CREATE POLICY "opportunity_outcomes_insert" ON "public"."opportunity_outcomes" FOR INSERT WITH CHECK (("public"."fn_is_platform_admin"() OR (("organization_id" IN ( SELECT "public"."fn_user_org_ids"() AS "fn_user_org_ids")) AND "public"."fn_role_at_least"("organization_id", 'manager'::"text"))));
+
+REVOKE ALL ON "public"."opportunity_records", "public"."opportunity_evidence", "public"."opportunity_actions", "public"."opportunity_outcomes" FROM "public", "anon";
+GRANT SELECT, INSERT, UPDATE, DELETE ON "public"."opportunity_records", "public"."opportunity_evidence", "public"."opportunity_actions", "public"."opportunity_outcomes" TO "authenticated";
+GRANT ALL ON "public"."opportunity_records", "public"."opportunity_evidence", "public"."opportunity_actions", "public"."opportunity_outcomes" TO "service_role";
+
+CREATE OR REPLACE FUNCTION "public"."fn_opportunity_records_guard"() RETURNS trigger
+    LANGUAGE "plpgsql"
+    SET "search_path" TO 'public', 'pg_temp'
+    AS $$
+begin
+  if new.linked_lead_id is not null
+     and not exists (
+       select 1 from public.crm_leads
+       where id = new.linked_lead_id
+         and organization_id = new.organization_id
+     ) then
+    raise exception 'opportunity_linked_lead_org_mismatch' using errcode = '23514';
+  end if;
+
+  if tg_op = 'UPDATE'
+     and old.state = 'suppressed'
+     and new.state <> 'suppressed' then
+    raise exception 'opportunity_suppressed_terminal' using errcode = '23514';
+  end if;
+
+  if new.state = 'suppressed' and new.suppressed_at is null then
+    if tg_op = 'UPDATE' then
+      new.suppressed_at := coalesce(old.suppressed_at, now());
+    else
+      new.suppressed_at := now();
+    end if;
+  end if;
+  return new;
+end $$;
+
+REVOKE ALL ON FUNCTION "public"."fn_opportunity_records_guard"() FROM "public", "anon";
+GRANT EXECUTE ON FUNCTION "public"."fn_opportunity_records_guard"() TO "authenticated", "service_role";
+
+CREATE OR REPLACE TRIGGER "trg_opportunity_records_updated_at" BEFORE UPDATE ON "public"."opportunity_records" FOR EACH ROW EXECUTE FUNCTION "public"."fn_set_updated_at"();
+CREATE OR REPLACE TRIGGER "trg_opportunity_actions_updated_at" BEFORE UPDATE ON "public"."opportunity_actions" FOR EACH ROW EXECUTE FUNCTION "public"."fn_set_updated_at"();
+CREATE OR REPLACE TRIGGER "trg_opportunity_records_guard" BEFORE INSERT OR UPDATE ON "public"."opportunity_records" FOR EACH ROW EXECUTE FUNCTION "public"."fn_opportunity_records_guard"();
+CREATE OR REPLACE TRIGGER "trg_opportunity_records_audit" AFTER INSERT OR UPDATE OR DELETE ON "public"."opportunity_records" FOR EACH ROW EXECUTE FUNCTION "public"."fn_audit_log_row"();
+CREATE OR REPLACE TRIGGER "trg_opportunity_evidence_audit" AFTER INSERT OR UPDATE OR DELETE ON "public"."opportunity_evidence" FOR EACH ROW EXECUTE FUNCTION "public"."fn_audit_log_row"();
+CREATE OR REPLACE TRIGGER "trg_opportunity_actions_audit" AFTER INSERT OR UPDATE OR DELETE ON "public"."opportunity_actions" FOR EACH ROW EXECUTE FUNCTION "public"."fn_audit_log_row"();
+CREATE OR REPLACE TRIGGER "trg_opportunity_outcomes_audit" AFTER INSERT OR UPDATE OR DELETE ON "public"."opportunity_outcomes" FOR EACH ROW EXECUTE FUNCTION "public"."fn_audit_log_row"();
+
+COMMENT ON TABLE "public"."opportunity_records" IS 'Opportunity Intelligence layer; identity is tenant-scoped and crm_leads are not duplicated.';
+COMMENT ON TABLE "public"."opportunity_evidence" IS 'Evidence provenance with freshness and source policy; no raw page snapshots.';
+COMMENT ON TABLE "public"."opportunity_actions" IS 'Internal proposals and review gates; action_ready never means outbound was sent.';
+COMMENT ON TABLE "public"."opportunity_outcomes" IS 'Idempotent business outcomes for the Opportunity Intelligence learning loop.';
+
+-- ---- Opportunity Intelligence source registry (migration 0241) -----------
+-- Sources are tenant configuration only. Discovery prepares internal Copilot
+-- proposals; this schema has no outbound-send capability.
+CREATE TABLE IF NOT EXISTS "public"."opportunity_source_configs" (
+  "id" uuid DEFAULT gen_random_uuid() NOT NULL,
+  "organization_id" uuid NOT NULL,
+  "source_id" text NOT NULL,
+  "name" text NOT NULL,
+  "source_kind" text NOT NULL,
+  "feed_url" text NOT NULL,
+  "terms_url" text NOT NULL,
+  "regions" text[] DEFAULT '{GLOBAL}'::text[] NOT NULL,
+  "niche" text DEFAULT 'servicos_digitais'::text NOT NULL,
+  "offer_key" text DEFAULT 'otimizacao_conversao_local'::text NOT NULL,
+  "rate_limit_per_minute" integer DEFAULT 60 NOT NULL,
+  "max_records_per_run" integer DEFAULT 100 NOT NULL,
+  "is_active" boolean DEFAULT true NOT NULL,
+  "last_synced_at" timestamp with time zone,
+  "last_error" text,
+  "created_by_user_id" uuid,
+  "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+  "updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+  CONSTRAINT "opportunity_source_configs_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "opportunity_source_configs_org_source_unique" UNIQUE ("organization_id", "source_id"),
+  CONSTRAINT "opportunity_source_configs_source_kind_check" CHECK ("source_kind" = ANY (ARRAY['open_data'::text, 'official_api'::text, 'tenant_first_party'::text])),
+  CONSTRAINT "opportunity_source_configs_source_id_check" CHECK ("source_id" ~ '^[a-z][a-z0-9_.-]{1,79}$'::text),
+  CONSTRAINT "opportunity_source_configs_feed_https" CHECK ("feed_url" ~ '^https://'::text),
+  CONSTRAINT "opportunity_source_configs_terms_https" CHECK ("terms_url" ~ '^https://'::text),
+  CONSTRAINT "opportunity_source_configs_rate_limit_check" CHECK (("rate_limit_per_minute" >= 1) AND ("rate_limit_per_minute" <= 100000)),
+  CONSTRAINT "opportunity_source_configs_max_records_check" CHECK (("max_records_per_run" >= 1) AND ("max_records_per_run" <= 100))
+);
+ALTER TABLE ONLY "public"."opportunity_source_configs"
+  ADD CONSTRAINT "opportunity_source_configs_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
+ALTER TABLE ONLY "public"."opportunity_source_configs"
+  ADD CONSTRAINT "opportunity_source_configs_created_by_user_id_fkey" FOREIGN KEY ("created_by_user_id") REFERENCES "auth"."users"("id") ON DELETE SET NULL;
+
+CREATE TABLE IF NOT EXISTS "public"."opportunity_discovery_runs" (
+  "id" uuid DEFAULT gen_random_uuid() NOT NULL,
+  "organization_id" uuid NOT NULL,
+  "source_config_id" uuid NOT NULL,
+  "source_id" text NOT NULL,
+  "window_key" text NOT NULL,
+  "status" text DEFAULT 'running'::text NOT NULL,
+  "candidates_seen" integer DEFAULT 0 NOT NULL,
+  "opportunities_created" integer DEFAULT 0 NOT NULL,
+  "errors" jsonb DEFAULT '[]'::jsonb NOT NULL,
+  "started_at" timestamp with time zone DEFAULT now() NOT NULL,
+  "finished_at" timestamp with time zone,
+  CONSTRAINT "opportunity_discovery_runs_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "opportunity_discovery_runs_org_id_key" UNIQUE ("organization_id", "id"),
+  CONSTRAINT "opportunity_discovery_runs_org_source_window_unique" UNIQUE ("organization_id", "source_id", "window_key"),
+  CONSTRAINT "opportunity_discovery_runs_status_check" CHECK ("status" = ANY (ARRAY['running'::text, 'succeeded'::text, 'failed'::text, 'skipped'::text])),
+  CONSTRAINT "opportunity_discovery_runs_errors_object_check" CHECK (jsonb_typeof("errors") = 'array'::text)
+);
+ALTER TABLE ONLY "public"."opportunity_discovery_runs"
+  ADD CONSTRAINT "opportunity_discovery_runs_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
+ALTER TABLE ONLY "public"."opportunity_discovery_runs"
+  ADD CONSTRAINT "opportunity_discovery_runs_source_config_id_fkey" FOREIGN KEY ("source_config_id") REFERENCES "public"."opportunity_source_configs"("id") ON DELETE CASCADE;
+ALTER TABLE ONLY "public"."opportunity_discovery_runs"
+  ADD CONSTRAINT "opportunity_discovery_runs_org_source_fk" FOREIGN KEY ("organization_id", "source_id") REFERENCES "public"."opportunity_source_configs"("organization_id", "source_id") ON DELETE CASCADE;
+
+CREATE INDEX IF NOT EXISTS "opportunity_source_configs_active_idx" ON "public"."opportunity_source_configs" USING btree ("organization_id", "is_active", "updated_at" DESC);
+CREATE INDEX IF NOT EXISTS "opportunity_discovery_runs_recent_idx" ON "public"."opportunity_discovery_runs" USING btree ("organization_id", "started_at" DESC);
+ALTER TABLE "public"."opportunity_source_configs" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "public"."opportunity_discovery_runs" ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "opportunity_source_configs_select" ON "public"."opportunity_source_configs";
+CREATE POLICY "opportunity_source_configs_select" ON "public"."opportunity_source_configs" FOR SELECT USING ("public"."fn_is_platform_admin"() OR "organization_id" IN (SELECT "public"."fn_user_org_ids"()));
+DROP POLICY IF EXISTS "opportunity_source_configs_write" ON "public"."opportunity_source_configs";
+CREATE POLICY "opportunity_source_configs_write" ON "public"."opportunity_source_configs" FOR ALL USING ("public"."fn_is_platform_admin"() OR (("organization_id" IN (SELECT "public"."fn_user_org_ids"())) AND "public"."fn_role_at_least"("organization_id", 'manager'::text))) WITH CHECK ("public"."fn_is_platform_admin"() OR (("organization_id" IN (SELECT "public"."fn_user_org_ids"())) AND "public"."fn_role_at_least"("organization_id", 'manager'::text)));
+DROP POLICY IF EXISTS "opportunity_discovery_runs_select" ON "public"."opportunity_discovery_runs";
+CREATE POLICY "opportunity_discovery_runs_select" ON "public"."opportunity_discovery_runs" FOR SELECT USING ("public"."fn_is_platform_admin"() OR "organization_id" IN (SELECT "public"."fn_user_org_ids"()));
+REVOKE ALL ON TABLE "public"."opportunity_source_configs", "public"."opportunity_discovery_runs" FROM "public", "anon";
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "public"."opportunity_source_configs" TO "authenticated";
+GRANT SELECT ON TABLE "public"."opportunity_discovery_runs" TO "authenticated";
+GRANT ALL ON TABLE "public"."opportunity_source_configs", "public"."opportunity_discovery_runs" TO "service_role";
+CREATE OR REPLACE TRIGGER "trg_opportunity_source_configs_updated_at" BEFORE UPDATE ON "public"."opportunity_source_configs" FOR EACH ROW EXECUTE FUNCTION "public"."fn_set_updated_at"();
+COMMENT ON TABLE "public"."opportunity_source_configs" IS 'Tenant-scoped authorized discovery sources. Collection creates proposals only; no outbound send.';
+COMMENT ON TABLE "public"."opportunity_discovery_runs" IS 'Idempotent hourly discovery sweep ledger for source/tenant execution and observability.';
+
+-- ---- Opportunity Intelligence timeline idempotency (migration 0242) -------
+CREATE UNIQUE INDEX IF NOT EXISTS "crm_lead_activities_opportunity_link_unique"
+  ON "public"."crm_lead_activities" USING btree ("organization_id", (("metadata" ->> 'idempotency_key'::text)))
+  WHERE (("source_module" = 'opportunity_intelligence'::text) AND ("type" = 'opportunity_linked'::text) AND ("metadata" ? 'idempotency_key'::text));
+COMMENT ON INDEX "public"."crm_lead_activities_opportunity_link_unique" IS 'One retry-safe opportunity_linked timeline activity per organization and idempotency key.';
+
+-- ---- Opportunity Intelligence mutation boundary (migration 0243) ----------
+REVOKE ALL ON TABLE "public"."opportunity_records", "public"."opportunity_evidence", "public"."opportunity_actions", "public"."opportunity_outcomes" FROM "authenticated";
+GRANT SELECT ON TABLE "public"."opportunity_records", "public"."opportunity_evidence", "public"."opportunity_actions", "public"."opportunity_outcomes" TO "authenticated";
+COMMENT ON TABLE "public"."opportunity_records" IS 'Opportunity Intelligence layer. Writes are server-side only; state transitions pass through the deterministic writer.';
+
+-- ---- Opportunity Intelligence transactional writer (migration 0244) ------
+-- The complete plan is committed by one SECURITY DEFINER transaction. Only
+-- service_role can execute the function; authenticated users retain read-only
+-- access to the four Opportunity Intelligence tables.
+CREATE UNIQUE INDEX IF NOT EXISTS "opportunity_event_log_idempotency_unique"
+  ON "public"."event_log" USING btree
+    ("organization_id", "event_type", "entity_kind", "entity_id", (("metadata" ->> 'idempotency_key'::text)))
+  WHERE ("entity_kind" = 'opportunity'::text AND ("metadata" ? 'idempotency_key'::text));
+
+CREATE OR REPLACE FUNCTION "public"."persist_opportunity_pipeline_plan"("p_plan" jsonb, "p_actor_user_id" uuid DEFAULT NULL::uuid)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $$
+declare
+  v_org uuid; v_trace text; v_item jsonb; v_assessment jsonb; v_identity jsonb;
+  v_decision jsonb; v_action jsonb; v_event jsonb; v_evidence jsonb;
+  v_existing_state text; v_opportunity_id uuid; v_action_id uuid;
+  v_record_state text; v_requested_state text; v_identity_key text;
+  v_evidence_count integer; v_events_emitted integer; v_results jsonb := '[]'::jsonb;
+  v_now timestamptz; v_metadata jsonb; v_inserted integer;
+begin
+  if p_plan is null or jsonb_typeof(p_plan) <> 'object' then
+    raise exception 'opportunity_pipeline_plan_invalid' using errcode = '22023';
+  end if;
+  v_org := nullif(p_plan->>'organization_id', '')::uuid;
+  v_trace := nullif(btrim(p_plan->>'trace_id'), '');
+  if v_org is null or v_trace is null
+     or coalesce((p_plan->>'schema_version')::integer, 0) <> 1
+     or jsonb_typeof(p_plan->'items') <> 'array' then
+    raise exception 'opportunity_pipeline_plan_invalid' using errcode = '22023';
+  end if;
+  if auth.uid() is not null and not public.fn_role_at_least(v_org, 'manager') then
+    raise exception 'caller_not_authorized_for_org';
+  end if;
+  for v_item in select value from jsonb_array_elements(p_plan->'items') loop
+    v_assessment := v_item->'assessment';
+    v_identity := v_assessment->'candidate'->'identity';
+    v_decision := v_item->'decision'; v_action := v_item->'action_plan';
+    v_identity_key := nullif(btrim(v_item->>'identity_key'), '');
+    v_requested_state := nullif(v_decision->>'state', '');
+    if jsonb_typeof(v_item) <> 'object' or jsonb_typeof(v_assessment) <> 'object'
+       or jsonb_typeof(v_identity) <> 'object' or v_identity_key is null
+       or v_requested_state is null then
+      raise exception 'opportunity_pipeline_item_invalid' using errcode = '22023';
+    end if;
+    select state into v_existing_state from public.opportunity_records
+      where organization_id = v_org and identity_key = v_identity_key for update;
+    if v_existing_state = 'suppressed' and v_requested_state <> 'suppressed' then
+      select id into v_opportunity_id from public.opportunity_records
+        where organization_id = v_org and identity_key = v_identity_key;
+      v_results := v_results || jsonb_build_array(jsonb_build_object(
+        'opportunity_id', v_opportunity_id, 'identity_key', v_identity_key,
+        'state', 'suppressed', 'action_id', null, 'evidence_count', 0, 'events_emitted', 0));
+      continue;
+    end if;
+    v_now := clock_timestamp();
+    insert into public.opportunity_records (
+      id, organization_id, linked_lead_id, identity_key, display_name, domain,
+      region_key, state, confidence, signals, exception_code, exception_message,
+      last_evaluated_at, suppressed_at, suppressed_reason, updated_at
+    ) values (
+      nullif(v_item->>'opportunity_id', '')::uuid, v_org,
+      nullif(v_decision->>'linked_lead_id', '')::uuid, v_identity_key,
+      nullif(btrim(v_identity->>'display_name'), ''), nullif(btrim(v_identity->>'domain'), ''),
+      null, v_requested_state, coalesce((v_decision->>'confidence')::numeric, 0),
+      coalesce(v_assessment->'signals', '[]'::jsonb),
+      nullif(v_decision->'exceptions'->0->>'code', ''),
+      nullif(v_decision->'exceptions'->0->>'message', ''), v_now,
+      case when v_requested_state = 'suppressed' then v_now else null end,
+      case when v_requested_state = 'suppressed' then
+        coalesce(nullif(v_decision->'exceptions'->0->>'message', ''), 'Tenant suppression list')
+      else null end, v_now
+    ) on conflict (organization_id, identity_key) do update set
+      linked_lead_id = excluded.linked_lead_id, display_name = excluded.display_name,
+      domain = excluded.domain, region_key = excluded.region_key, state = excluded.state,
+      confidence = excluded.confidence, signals = excluded.signals,
+      exception_code = excluded.exception_code, exception_message = excluded.exception_message,
+      last_evaluated_at = excluded.last_evaluated_at, suppressed_at = excluded.suppressed_at,
+      suppressed_reason = excluded.suppressed_reason, updated_at = excluded.updated_at
+      where public.opportunity_records.state <> 'suppressed' or excluded.state = 'suppressed'
+    returning id, state into v_opportunity_id, v_record_state;
+    if v_opportunity_id is null then
+      select id, state into v_opportunity_id, v_record_state from public.opportunity_records
+        where organization_id = v_org and identity_key = v_identity_key for update;
+      if v_record_state = 'suppressed' and v_requested_state <> 'suppressed' then
+        v_results := v_results || jsonb_build_array(jsonb_build_object(
+          'opportunity_id', v_opportunity_id, 'identity_key', v_identity_key,
+          'state', 'suppressed', 'action_id', null, 'evidence_count', 0, 'events_emitted', 0));
+        continue;
+      end if;
+    end if;
+    v_evidence_count := 0;
+    for v_evidence in select value from jsonb_array_elements(coalesce(v_assessment->'evidence', '[]'::jsonb)) loop
+      insert into public.opportunity_evidence (
+        organization_id, opportunity_id, evidence_key, source_id, source_kind,
+        source_url, terms_url, policy_status, claim, signal_keys, polarity,
+        confidence, collected_at, freshness_ttl_hours
+      ) values (
+        v_org, v_opportunity_id, v_evidence->>'evidence_id', v_evidence->>'source_id',
+        v_evidence->>'source_kind', v_evidence->>'source_url', v_evidence->>'terms_url',
+        v_evidence->>'policy_status', v_evidence->>'claim',
+        array(select jsonb_array_elements_text(coalesce(v_evidence->'signal_keys', '[]'::jsonb))),
+        coalesce(v_evidence->>'polarity', 'supports'), (v_evidence->>'confidence')::numeric,
+        (v_evidence->>'collected_at')::timestamptz, (v_evidence->>'freshness_ttl_hours')::integer
+      ) on conflict (organization_id, opportunity_id, evidence_key) do nothing;
+      v_evidence_count := v_evidence_count + 1;
+    end loop;
+    v_action_id := null;
+    if jsonb_typeof(v_action) = 'object' and v_requested_state <> 'suppressed' then
+      insert into public.opportunity_actions (
+        organization_id, opportunity_id, action, status, idempotency_key,
+        requires_human_approval, pain_hypothesis, target_offer, proof_asset_summary,
+        evidence_keys, reason, created_by_user_id
+      ) values (
+        v_org, v_opportunity_id, v_action->>'action', 'proposed', v_action->>'idempotency_key',
+        true, v_action->>'pain_hypothesis', v_action->>'target_offer', v_action->>'proof_asset_summary',
+        array(select jsonb_array_elements_text(coalesce(v_action->'evidence_keys', '[]'::jsonb))),
+        v_action->>'reason', p_actor_user_id
+      ) on conflict (organization_id, idempotency_key) do nothing returning id into v_action_id;
+      if v_action_id is null then
+        select id into v_action_id from public.opportunity_actions
+          where organization_id = v_org and idempotency_key = v_action->>'idempotency_key';
+      end if;
+      if v_action_id is null then
+        select id into v_action_id from public.opportunity_actions
+          where organization_id = v_org and opportunity_id = v_opportunity_id
+            and status in ('proposed', 'approved') limit 1;
+      end if;
+    end if;
+    v_events_emitted := 0;
+    for v_event in select value from jsonb_array_elements(coalesce(v_item->'events', '[]'::jsonb)) loop
+      v_metadata := coalesce(v_event->'metadata', '{}'::jsonb);
+      if nullif(v_metadata->>'idempotency_key', '') is null then
+        raise exception 'opportunity_event_idempotency_key_required' using errcode = '22023';
+      end if;
+      insert into public.event_log (organization_id, event_type, entity_kind, entity_id, payload, metadata)
+      values (
+        v_org, v_event->>'event_type', 'opportunity', v_opportunity_id,
+        coalesce(v_event->'payload', '{}'::jsonb) || jsonb_build_object('opportunity_id', v_opportunity_id),
+        v_metadata || jsonb_build_object('emitted_at', extract(epoch from clock_timestamp()))
+      ) on conflict (organization_id, event_type, entity_kind, entity_id, (metadata->>'idempotency_key'))
+        where entity_kind = 'opportunity' and metadata ? 'idempotency_key' do nothing;
+      get diagnostics v_inserted = row_count; v_events_emitted := v_events_emitted + v_inserted;
+    end loop;
+    insert into public.api_audit_log (organization_id, actor_user_id, action, resource_type, resource_id)
+      values (v_org, p_actor_user_id, 'opportunity.evaluated', 'opportunity_records', v_opportunity_id);
+    v_results := v_results || jsonb_build_array(jsonb_build_object(
+      'opportunity_id', v_opportunity_id, 'identity_key', v_identity_key,
+      'state', v_record_state, 'action_id', v_action_id,
+      'evidence_count', v_evidence_count, 'events_emitted', v_events_emitted));
+  end loop;
+  return jsonb_build_object('trace_id', v_trace, 'organization_id', v_org,
+    'persisted_count', jsonb_array_length(v_results), 'results', v_results);
+end;
+$$;
+REVOKE ALL ON FUNCTION "public"."persist_opportunity_pipeline_plan"(jsonb, uuid) FROM public, anon, authenticated;
+GRANT EXECUTE ON FUNCTION "public"."persist_opportunity_pipeline_plan"(jsonb, uuid) TO service_role;
+COMMENT ON FUNCTION "public"."persist_opportunity_pipeline_plan"(jsonb, uuid) IS
+  'Atomic, retry-safe Opportunity Intelligence plan persistence. Copilot-only; never sends outbound.';
+
+-- ---- Opportunity Source Quota Buckets (migration 0245) ----
+
+create table if not exists public.opportunity_source_quota_buckets (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  source_id text not null,
+  tokens numeric(10, 2) not null default 100.00,
+  capacity numeric(10, 2) not null default 100.00 check (capacity > 0),
+  refill_rate_per_minute numeric(10, 2) not null default 10.00 check (refill_rate_per_minute > 0),
+  last_refill_at timestamptz not null default clock_timestamp(),
+  created_at timestamptz not null default clock_timestamp(),
+  updated_at timestamptz not null default clock_timestamp(),
+  constraint opportunity_source_quota_buckets_org_source_unique unique (organization_id, source_id),
+  constraint opportunity_source_quota_buckets_tokens_non_negative check (tokens >= 0),
+  constraint opportunity_source_quota_buckets_source_fk foreign key (organization_id, source_id)
+    references public.opportunity_source_configs(organization_id, source_id) on delete cascade
+);
+
+create index if not exists opportunity_source_quota_buckets_lookup_idx
+  on public.opportunity_source_quota_buckets (organization_id, source_id);
+
+alter table public.opportunity_source_quota_buckets enable row level security;
+alter table public.opportunity_source_quota_buckets force row level security;
+
+drop policy if exists opportunity_source_quota_buckets_select on public.opportunity_source_quota_buckets;
+create policy opportunity_source_quota_buckets_select on public.opportunity_source_quota_buckets
+  for select using (
+    public.fn_is_platform_admin()
+    or organization_id in (select public.fn_user_org_ids())
+  );
+
+revoke all on public.opportunity_source_quota_buckets from public, anon, authenticated;
+grant select on public.opportunity_source_quota_buckets to authenticated;
+grant all on public.opportunity_source_quota_buckets to service_role;
+
+create or replace function public.consume_opportunity_source_quota(
+  p_organization_id uuid,
+  p_source_id text,
+  p_cost numeric default 1.0,
+  p_capacity numeric default 100.0,
+  p_refill_rate_per_minute numeric default 10.0
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_default_cap numeric(10, 2);
+  v_default_refill numeric(10, 2);
+  v_tokens numeric(10, 2);
+  v_capacity numeric(10, 2);
+  v_refill_rate numeric(10, 2);
+  v_last_refill_at timestamptz;
+  v_now timestamptz;
+  v_elapsed_seconds numeric;
+  v_refilled_tokens numeric;
+  v_available_tokens numeric;
+  v_remaining_tokens numeric(10, 2);
+  v_allowed boolean;
+  v_deficit numeric;
+  v_retry_after integer;
+begin
+  if p_organization_id is null then
+    raise exception 'organization_id_required' using errcode = '22023';
+  end if;
+  if nullif(trim(p_source_id), '') is null then
+    raise exception 'source_id_required' using errcode = '22023';
+  end if;
+  if p_cost is null or p_cost <= 0 then
+    raise exception 'cost_must_be_positive' using errcode = '22023';
+  end if;
+
+  if auth.role() = 'authenticated' then
+    raise exception 'opportunity_quota_mutation_forbidden' using errcode = '42501';
+  end if;
+
+  if not exists (
+    select 1 from public.opportunity_source_configs
+    where organization_id = p_organization_id and source_id = p_source_id
+  ) then
+    raise exception 'opportunity_source_not_found' using errcode = 'P0002';
+  end if;
+
+  v_default_cap := round(greatest(1.0, coalesce(p_capacity, 100.0)), 2);
+  v_default_refill := round(greatest(0.1, coalesce(p_refill_rate_per_minute, 10.0)), 2);
+
+  insert into public.opportunity_source_quota_buckets (
+    organization_id,
+    source_id,
+    tokens,
+    capacity,
+    refill_rate_per_minute,
+    last_refill_at,
+    updated_at
+  ) values (
+    p_organization_id,
+    p_source_id,
+    v_default_cap,
+    v_default_cap,
+    v_default_refill,
+    clock_timestamp(),
+    clock_timestamp()
+  )
+  on conflict (organization_id, source_id) do nothing;
+
+  select
+    tokens,
+    capacity,
+    refill_rate_per_minute,
+    last_refill_at
+  into
+    v_tokens,
+    v_capacity,
+    v_refill_rate,
+    v_last_refill_at
+  from public.opportunity_source_quota_buckets
+  where organization_id = p_organization_id
+    and source_id = p_source_id
+  for update;
+
+  v_now := clock_timestamp();
+  v_elapsed_seconds := greatest(0.0, extract(epoch from (v_now - v_last_refill_at)));
+  v_refilled_tokens := (v_elapsed_seconds / 60.0) * v_refill_rate;
+  v_available_tokens := least(v_capacity, v_tokens + v_refilled_tokens);
+
+  if v_available_tokens >= p_cost then
+    v_allowed := true;
+    v_remaining_tokens := round(greatest(0.0, v_available_tokens - p_cost), 2);
+    v_retry_after := 0;
+  else
+    v_allowed := false;
+    v_remaining_tokens := round(v_available_tokens, 2);
+    v_deficit := p_cost - v_available_tokens;
+    v_retry_after := greatest(1, ceil((v_deficit / v_refill_rate) * 60.0)::integer);
+  end if;
+
+  update public.opportunity_source_quota_buckets
+  set
+    tokens = v_remaining_tokens,
+    last_refill_at = v_now,
+    updated_at = v_now
+  where organization_id = p_organization_id
+    and source_id = p_source_id;
+
+  return jsonb_build_object(
+    'allowed', v_allowed,
+    'tokens_remaining', v_remaining_tokens,
+    'remainingTokens', v_remaining_tokens,
+    'cost', round(p_cost, 2),
+    'retry_after_seconds', v_retry_after,
+    'retryAfterSeconds', v_retry_after,
+    'capacity', v_capacity,
+    'refill_rate_per_minute', v_refill_rate,
+    'refillRatePerMinute', v_refill_rate,
+    'last_refill_at', v_now,
+    'lastRefillAt', v_now
+  );
+end;
+$$;
+
+revoke all on function public.consume_opportunity_source_quota(uuid, text, numeric, numeric, numeric) from public, anon, authenticated;
+grant execute on function public.consume_opportunity_source_quota(uuid, text, numeric, numeric, numeric) to service_role;
+
+comment on table public.opportunity_source_quota_buckets is
+  'Tenant + source token-bucket quota state; survives multiple processes and cron workers with atomic FOR UPDATE locking.';
+comment on function public.consume_opportunity_source_quota(uuid, text, numeric, numeric, numeric) is
+  'Atomic token-bucket quota consumption per tenant and source. Service_role only, with FOR UPDATE row locking and source existence check.';
+
 -- ---- VARREDURA anon: função nova nasce exposta em quem ATUALIZA (migration 0116) ----
 --
 -- ⚠️ ESTE BLOCO É, DE PROPÓSITO, O ÚLTIMO DO ARQUIVO. Apêndice novo entra ANTES

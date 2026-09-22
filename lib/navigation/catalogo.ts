@@ -477,8 +477,18 @@ export const NAV_CATALOG = [
   // justamente disso que o hub é feito: quem vai lá vai de propósito.
   //
   // Sair do menu não é sair do produto — o hub `/app/analise` é INVENTÁRIO e
-  // lista as cinco (`hubSections`), então as duas continuam a um clique, com a
+  // lista as seis (`hubSections`), então as duas continuam a um clique, com a
   // frase que explica para que servem. O ⌘K também as acha por nome.
+  {
+    href: "/app/opportunities",
+    label: "Oportunidades",
+    description:
+      "Sinais comprovados que viraram uma próxima ação — com evidência e revisão humana quando necessário.",
+    icon: "Lightbulb",
+    group: "analise",
+    section: "Encontrar oportunidades",
+    sidebar: true,
+  },
   {
     href: "/app/metrics",
     label: "Desempenho",

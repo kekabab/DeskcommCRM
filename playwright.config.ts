@@ -132,7 +132,9 @@ export default defineConfig({
   webServer: {
     // Produção (`next build` antes!): dev-server compila por rota (40-80s) e
     // Turbopack dev quebra cookies() fora do request scope — inviável p/ e2e.
-    command: `pnpm exec next start --port ${PORT}`,
+    // Windows deste checkout expõe pnpm via Corepack, sem um `pnpm` shim no
+    // PATH; manter a variante Unix preserva o comando usado no CI/Linux.
+    command: `${process.platform === "win32" ? "corepack pnpm" : "pnpm"} exec next start --port ${PORT}`,
     // O ambiente do servidor sob teste vem do `.env.e2e`, INJETADO aqui — e não
     // do `.env.local`, que num checkout de trabalho aponta para PRODUÇÃO.
     // Variável de ambiente real tem precedência sobre os arquivos `.env*` que o

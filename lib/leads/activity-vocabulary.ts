@@ -22,6 +22,8 @@ export type ActivityType =
   // card aparece no kanban sem que ninguém saiba de onde veio — e "apareceu
   // sozinho" é como se perde a confiança num automatismo.
   | "lead_created"
+  /** Vínculo explicável entre uma oportunidade e um lead existente no CRM. */
+  | "opportunity_linked"
   | "stage_changed"
   /** Um humano desfez ou redirecionou o que a IA tinha movido (spec 17 passo 5). */
   | "agent_move_corrected"
@@ -153,6 +155,7 @@ export type ActivityType =
 
 export const ACTIVITY_LABELS: Record<ActivityType, string> = {
   lead_created: "Entrou pelo WhatsApp",
+  opportunity_linked: "Oportunidade vinculada ao negócio",
   stage_changed: "Mudou de estágio",
   agent_move_corrected: "Correção do que o assistente tinha feito",
   note: "Anotação",
